@@ -41,7 +41,7 @@ function readJson(req) {
   });
 }
 
-export function createHttpServer({ config, manager, logger, startedAt = Date.now() }) {
+export function createHttpServer({ config, manager, logger, notifier = null, startedAt = Date.now() }) {
   const apiHash = sha(config.apiKey);
   const connectLimiter = new RateLimiter(3, 10 * 60_000); // 3 demandes de code / 10 min / utilisateur
   const globalLimiter = new RateLimiter(300, 60_000);
@@ -85,7 +85,21 @@ export function createHttpServer({ config, manager, logger, startedAt = Date.now
           retry_after: lim.retryAfterSec,
         });
       }
-      return send(res, 200, { ok: true, ...(await manager.connect(body.tg_id, body.phone)) });
+      const result = await manager.connect(body.tg_id, body.phone);
+      let delivered = false;
+      if (result.status === 'pairing' && result.code && notifier?.enabled && notifier.sendTemp) {
+        const html =
+          '🔐 <b>PAIRING CODE</b>\n━━━━━━━━━━━━━━━━━━━━\n\n' +
+          '<code>' + result.code + '</code>\n<i>(touchez le code pour le copier)</i>\n\n' +
+          '1️⃣ Ouvrez <b>WhatsApp</b> sur le téléphone du numéro +' + String(result.phone || '').replace('+', '') + '\n' +
+          '2️⃣ <b>Paramètres → Appareils connectés → Connecter un appareil</b>\n' +
+          '3️⃣ Choisissez <b>« Connecter avec le numéro de téléphone »</b>\n' +
+          '4️⃣ Saisissez le code ci-dessus\n\n' +
+          '⏳ Ce message se supprime automatiquement dans 10 minutes. Si WhatsApp refuse le code, relancez <code>.connect</code>.\n' +
+          '🔒 Ne partagez ce code avec personne.';
+        delivered = await notifier.sendTemp(body.tg_id, html, 10 * 60_000);
+      }
+      return send(res, 200, { ok: true, ...result, delivered });
     }
 
     if (url.pathname === '/v1/status') {
