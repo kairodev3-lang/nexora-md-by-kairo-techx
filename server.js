@@ -64,6 +64,9 @@ export function createHttpServer({ config, manager, logger, startedAt = Date.now
   };
 
   async function route(req, res, url) {
+    if (req.method === 'GET' && url.pathname === '/') {
+      return send(res, 200, { ok: true, name: 'NEXORA MD', status: 'online' });
+    }
     if (req.method === 'GET' && url.pathname === '/health') {
       return send(res, 200, { ok: true, uptime_s: Math.floor((Date.now() - startedAt) / 1000) });
     }
