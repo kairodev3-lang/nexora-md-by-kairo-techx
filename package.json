@@ -1,0 +1,17 @@
+{
+  "name": "nexora-md-backend",
+  "version": "1.0.0",
+  "description": "NEXORA MD — backend WhatsApp (pairing code, multi-sessions) piloté par un bot Telegram Telebot Creator",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "latest"
+  }
+}
