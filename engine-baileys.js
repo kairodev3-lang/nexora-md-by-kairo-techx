@@ -88,23 +88,28 @@ export async function createBaileysEngine() {
         }
       });
 
-      // Commandes « . » : uniquement les messages ÉCRITS PAR le propriétaire dans son chat
-      // « Vous-même ». Les réponses du bot ne commencent pas par « . » → pas de boucle.
-      const num = (j) => String(j || '').split('@')[0].split(':')[0];
-      const isSelfChat = (jid) => {
-        if (!jid || jid.endsWith('@g.us') || jid.endsWith('@broadcast') || jid.endsWith('@newsletter')) return false;
-        const me = [num(sock.user?.id), num(sock.user?.lid)].filter(Boolean);
-        return me.includes(num(jid));
+      // Commandes « . » : uniquement les messages ÉCRITS PAR le propriétaire du compte (fromMe),
+      // dans n'importe quel chat. Personne d'autre ne peut déclencher une commande.
+      // Les réponses du bot ne commencent pas par « . » → pas de boucle.
+      const tsOf = (m) => {
+        const t = m.messageTimestamp;
+        if (t == null) return 0;
+        return typeof t === 'object' && typeof t.toNumber === 'function' ? t.toNumber() : Number(t);
       };
       sock.ev.on('messages.upsert', async ({ messages, type }) => {
-        if (type !== 'notify' || !onCommand) return;
+        if (!onCommand) return;
         for (const m of messages || []) {
           try {
-            if (!m.message || !m.key?.fromMe || !isSelfChat(m.key.remoteJid)) continue;
-            const text = m.message.conversation || m.message.extendedTextMessage?.text || '';
+            if (!m.message || !m.key?.fromMe) continue;
+            const jid = m.key.remoteJid;
+            if (!jid || jid === 'status@broadcast' || jid.endsWith('@newsletter')) continue;
+            // messages synchronisés (append) : on ignore les anciens pour ne rien rejouer au redémarrage
+            if (type !== 'notify' && Date.now() / 1000 - tsOf(m) > 60) continue;
+            const content = m.message.ephemeralMessage?.message || m.message.viewOnceMessage?.message || m.message;
+            const text = content.conversation || content.extendedTextMessage?.text || '';
             if (!text.startsWith(PREFIX)) continue;
             const reply = onCommand(text);
-            if (reply) await sock.sendMessage(m.key.remoteJid, { text: reply }, { quoted: m });
+            if (reply) await sock.sendMessage(jid, { text: reply }, { quoted: m });
           } catch { /* une commande qui échoue ne doit jamais casser la session */ }
         }
       });
