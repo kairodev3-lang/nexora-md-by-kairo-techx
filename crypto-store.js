@@ -39,10 +39,15 @@ export const sealJson = (key, aad, value, replacer) =>
 export const unsealJson = (key, aad, blob, reviver) =>
   JSON.parse(unseal(key, blob, aad).toString('utf8'), reviver);
 
-const SAFE_NAME = /^[A-Za-z0-9._-]+$/;
+const SAFE_NAME = /^[A-Za-z0-9._%-]+$/;
+const pct = (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0');
+// Les identifiants Baileys contiennent « @ » (ex. 509…@s.whatsapp.net, …@g.us). On encode tout
+// caractère non sûr en %XX : nom unique, sans « / » ni « .. » → aucun chemin hors du dossier.
 const fileSafe = (name) => {
-  const n = String(name).replace(/\//g, '__').replace(/:/g, '-');
-  if (!SAFE_NAME.test(n) || n.includes('..')) throw new Error('nom de fichier de session invalide');
+  let n = String(name).replace(/\//g, '__').replace(/:/g, '-');
+  n = n.replace(/[^A-Za-z0-9._%-]/g, pct);
+  n = n.replace(/\.{2,}/g, (m) => m.split('').map(() => '%2E').join(''));
+  if (!n || !SAFE_NAME.test(n) || n.includes('..')) throw new Error('nom de fichier de session invalide');
   return n;
 };
 
