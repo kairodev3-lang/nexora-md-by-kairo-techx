@@ -20,6 +20,7 @@
 
 import { useEncryptedAuthState } from './crypto-store.js';
 import { silentBaileysLogger } from './util.js';
+import { readFile } from 'node:fs/promises';
 import { PREFIX } from './wa-menu.js';
 
 const CODE_BY_NUMBER = {
@@ -44,6 +45,29 @@ export async function createBaileysEngine() {
   } = mod;
 
   const logger = silentBaileysLogger();
+  const log = (level, msg, extra = {}) => console.log(JSON.stringify({ t: new Date().toISOString(), level, msg, ...extra }));
+
+  // Image du menu (menu.jpg à côté des fichiers .js). Absente → menu en texte seul.
+  let menuImage = null;
+  try {
+    menuImage = await readFile(new URL('./menu.jpg', import.meta.url));
+  } catch {
+    log('warn', 'menu.jpg introuvable : menu envoyé sans image');
+  }
+  const isMenuText = (t) => typeof t === 'string' && t.startsWith('╭━━━⟦');
+  const sendReply = async (sock, jid, text, quoted) => {
+    const opts = quoted ? { quoted } : undefined;
+    if (menuImage && isMenuText(text)) {
+      if (text.length <= 1000) {
+        await sock.sendMessage(jid, { image: menuImage, caption: text }, opts);
+      } else {
+        await sock.sendMessage(jid, { image: menuImage }, opts);
+        await sock.sendMessage(jid, { text }, opts);
+      }
+      return;
+    }
+    await sock.sendMessage(jid, { text }, opts);
+  };
 
   return {
     async open({ authDir, key, onEvent, onCommand }) {
@@ -108,9 +132,14 @@ export async function createBaileysEngine() {
             const content = m.message.ephemeralMessage?.message || m.message.viewOnceMessage?.message || m.message;
             const text = content.conversation || content.extendedTextMessage?.text || '';
             if (!text.startsWith(PREFIX)) continue;
+            const cmd = text.slice(PREFIX.length).split(/\s+/)[0].toLowerCase();
             const reply = onCommand(text);
-            if (reply) await sock.sendMessage(jid, { text: reply }, { quoted: m });
-          } catch { /* une commande qui échoue ne doit jamais casser la session */ }
+            log('info', 'wa command', { cmd, known: Boolean(reply), type });
+            if (reply) await sendReply(sock, jid, reply, m);
+          } catch (e) {
+            // une commande qui échoue ne doit jamais casser la session
+            log('warn', 'wa command failed', { err: e?.message || 'error' });
+          }
         }
       });
 
@@ -118,7 +147,7 @@ export async function createBaileysEngine() {
       return {
         async sendSelf(text) {
           const me = sock.user?.id;
-          if (me) await sock.sendMessage(jidNormalizedUser(me), { text });
+          if (me) await sendReply(sock, jidNormalizedUser(me), text, null);
         },
         async requestPairingCode(phone) {
           await Promise.race([ready, new Promise((r) => setTimeout(r, 5000))]);
