@@ -18,7 +18,7 @@ try {
 const engine = await createBaileysEngine();
 const notifier = createTelegramNotifier({ token: config.telegramToken, logger });
 const manager = new SessionManager({ config, engine, notifier, logger });
-const server = createHttpServer({ config, manager, logger });
+const server = createHttpServer({ config, manager, logger, notifier });
 
 server.listen(config.port, config.host, () => {
   logger.info('NEXORA MD backend prêt', { port: config.port, notifications: notifier.enabled });
