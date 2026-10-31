@@ -23,7 +23,7 @@ export const SECTIONS = [
   {
     title: '⚙️ SETTINGS',
     bullet: '⌁',
-    cmds: ['autorecording', 'autotyping', 'anticall', 'welcome', 'goodbye', 'autoread', 'autoviewstatus', 'autolikestatus', 'setprefix'],
+    cmds: ['autorecording', 'autotyping', 'anticall', 'welcome', 'goodbye', 'autoread', 'autoviewstatus', 'autolikestatus', 'mode', 'setprefix'],
   },
 ];
 export const COMMAND_COUNT = SECTIONS.reduce((n, s) => n + s.cmds.length, 0);
