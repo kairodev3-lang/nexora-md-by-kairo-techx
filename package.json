@@ -13,5 +13,9 @@
   },
   "dependencies": {
     "@whiskeysockets/baileys": "latest"
+  },
+  "optionalDependencies": {
+    "yt-search": "^2.10.0",
+    "node-webpmux": "^3.1.0"
   }
 }
