@@ -107,8 +107,8 @@ export class SessionManager {
       authDir: this.dir(s.tgId),
       key: this._key(s.tgId),
       onEvent: (e) => this._onEvent(s, gen, e),
-      onCommand: (text) =>
-        handleWaCommand(text, { brand: this.config.brand, startedAt: this.startedAt, sessionSince: s.connectedAt }),
+      onCommand: (text, extra = {}) =>
+        handleWaCommand(text, { brand: this.config.brand, startedAt: this.startedAt, sessionSince: s.connectedAt, ...extra }),
     });
     if (s.gen !== gen || s.state === 'removed' || this.closing) {
       handle.close();
