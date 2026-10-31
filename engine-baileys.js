@@ -191,7 +191,7 @@ export async function createBaileysEngine() {
               await extras.handleCommand({ cmd, args, q: args.join(' '), jid, m, content, reply });
               continue;
             }
-            const out = onCommand(text, { prefix: used });
+            const out = await onCommand(text, { prefix: used });
             log('info', 'wa command', { cmd, known: Boolean(out), type });
             if (out) await reply(out);
           } catch (e) {
