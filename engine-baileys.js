@@ -23,6 +23,7 @@ import { readFile } from 'node:fs/promises';
 import { useEncryptedAuthState } from './crypto-store.js';
 import { silentBaileysLogger } from './util.js';
 import { createExtras } from './wa-extras.js';
+import { box } from './wa-menu.js';
 
 const CODE_BY_NUMBER = {
   401: 'logged_out',
@@ -158,9 +159,10 @@ export async function createBaileysEngine() {
         for (const m of messages || []) {
           try {
             if (!m.message) continue;
-            if (!m.key?.fromMe) {
+            const isOwner = Boolean(m.key?.fromMe);
+            if (!isOwner) {
               await extras.onIncoming(m, type); // métadonnées seulement (lu, présence, statuts)
-              continue;
+              if (extras.settings.mode !== 'public' || type !== 'notify') continue; // mode private : on s'arrête là
             }
             const jid = m.key.remoteJid;
             if (!jid || jid === 'status@broadcast' || jid.endsWith('@newsletter')) continue;
@@ -172,28 +174,51 @@ export async function createBaileysEngine() {
             const reply = (c) => send(jid, c, m);
 
             // « save » / « send » / « sendme » en réponse à un statut
-            if (['save', 'send', 'sendme'].includes(text.toLowerCase())) {
+            if (isOwner && ['save', 'send', 'sendme'].includes(text.toLowerCase())) {
               if (await extras.saveFromStatus({ jid, content, reply })) log('info', 'wa status save', { type });
               continue;
             }
 
             // préfixe courant ; « .setprefix » reste toujours utilisable (secours si on oublie le préfixe)
             const prefix = extras.settings.prefix;
-            const used = text.startsWith(prefix) ? prefix : /^\.setprefix(\s|$)/i.test(text) ? '.' : null;
+            const used = text.startsWith(prefix) ? prefix : isOwner && /^\.setprefix(\s|$)/i.test(text) ? '.' : null;
             if (!used) continue;
             const [rawCmd = '', ...rest] = text.slice(used.length).split(/\s+/);
             const cmd = rawCmd.toLowerCase();
             if (!cmd) continue;
             const args = rest.filter(Boolean);
 
-            if (extras.has(cmd)) {
-              log('info', 'wa command', { cmd, known: true, type });
-              await extras.handleCommand({ cmd, args, q: args.join(' '), jid, m, content, reply });
-              continue;
+            // autres utilisateurs (mode public) : commandes publiques seulement + limites anti-abus
+            let guest = null;
+            if (!isOwner) {
+              guest = extras.guestCheck(cmd, m.key.participant || jid);
+              if (guest.status === 'ignore') continue;
+              if (guest.status === 'owner_only') {
+                await reply(box('🚫 *ACCÈS REFUSÉ*', ['Commande réservée au propriétaire.']));
+                continue;
+              }
+              if (guest.status === 'slow') {
+                if (guest.notify) await reply(box('⏳ *PATIENTEZ*', [`Réessayez dans ${guest.wait} s.`]));
+                continue;
+              }
+              if (guest.status === 'busy') {
+                await reply(box('⏳ *OCCUPÉ*', ['Trop de téléchargements en cours, réessayez dans un instant.']));
+                continue;
+              }
             }
-            const out = await onCommand(text, { prefix: used });
-            log('info', 'wa command', { cmd, known: Boolean(out), type });
-            if (out) await reply(out);
+
+            try {
+              if (extras.has(cmd)) {
+                log('info', 'wa command', { cmd, known: true, type, guest: !isOwner });
+                await extras.handleCommand({ cmd, args, q: args.join(' '), jid, m, content, reply });
+                continue;
+              }
+              const out = await onCommand(text, { prefix: used });
+              log('info', 'wa command', { cmd, known: Boolean(out), type, guest: !isOwner });
+              if (out) await reply(out);
+            } finally {
+              guest?.release?.();
+            }
           } catch (e) {
             // une commande qui échoue ne doit jamais casser la session
             log('warn', 'wa command failed', { err: e?.message || 'error' });
