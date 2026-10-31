@@ -17,11 +17,12 @@ const DEFAULT_BRAND = {
 export const SECTIONS = [
   { title: '🏠 GENERAL', bullet: '✧', cmds: ['menu', 'help', 'owner'] },
   { title: '⚡ SESSION', bullet: '◈', cmds: ['alive', 'ping', 'runtime', 'status'] },
-  { title: '📥 DOWNLOAD', bullet: '⌁', cmds: ['apk'] },
-  { title: '🛠️ OWNER TOOLS', bullet: '✧', cmds: ['unblock', 'save'] },
+  { title: '📥 DOWNLOAD', bullet: '⌁', cmds: ['apk', 'video', 'pinterest', 'telegram'] },
+  { title: '🧰 TOOLS', bullet: '✧', cmds: ['fancy', 'jid'] },
+  { title: '🛠️ OWNER TOOLS', bullet: '◈', cmds: ['unblock', 'save', 'pair', 'depair'] },
   {
     title: '⚙️ SETTINGS',
-    bullet: '◈',
+    bullet: '⌁',
     cmds: ['autorecording', 'autotyping', 'anticall', 'welcome', 'goodbye', 'autoread', 'autoviewstatus', 'autolikestatus', 'setprefix'],
   },
 ];
