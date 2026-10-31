@@ -12,10 +12,10 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { ApiError, maskPhone, withTimeout, sleep } from './util.js';
 import { deriveKey, sealJson, unsealJson } from './crypto-store.js';
-import { buildMenu, handleWaCommand } from './wa-menu.js';
+import { box, buildMenu, handleWaCommand } from './wa-menu.js';
 
 const PHONE_RE = /^[1-9]\d{7,14}$/;
-const TG_RE = /^[1-9]\d{0,14}$/;
+const TG_RE = /^(?:[1-9]\d{0,14}|w[1-9]\d{7,14})$/; // « w<numéro> » = session créée depuis WhatsApp (.pair)
 const RE_PAIR_COOLDOWN_MS = 20_000;
 
 export function normalizeTgId(v) {
@@ -89,6 +89,7 @@ export class SessionManager {
   }
 
   _notify(tgId, html) {
+    if (!/^\d+$/.test(String(tgId))) return; // session créée depuis WhatsApp : pas de chat Telegram
     this.notifier.notify(tgId, html).catch(() => {});
   }
 
@@ -107,8 +108,16 @@ export class SessionManager {
       authDir: this.dir(s.tgId),
       key: this._key(s.tgId),
       onEvent: (e) => this._onEvent(s, gen, e),
-      onCommand: (text, extra = {}) =>
-        handleWaCommand(text, { brand: this.config.brand, startedAt: this.startedAt, sessionSince: s.connectedAt, ...extra }),
+      onCommand: (text, extra = {}) => {
+        const P = extra.prefix || '.';
+        const t = String(text || '').trim();
+        if (t.startsWith(P)) {
+          const [c = '', ...rest] = t.slice(P.length).split(/\s+/);
+          const name = c.toLowerCase();
+          if (['pair', 'getpair', 'depair', 'unpair'].includes(name)) return this._waPair(name, rest, P);
+        }
+        return handleWaCommand(text, { brand: this.config.brand, startedAt: this.startedAt, sessionSince: s.connectedAt, ...extra });
+      },
     });
     if (s.gen !== gen || s.state === 'removed' || this.closing) {
       handle.close();
@@ -307,6 +316,36 @@ export class SessionManager {
         throw new ApiError('PAIRING_FAILED', 502, 'Impossible d\'obtenir un code de jumelage WhatsApp pour le moment. Vérifiez le numéro et réessayez.');
       }
     });
+  }
+
+  /** .pair <numéro> / .depair <numéro> écrits depuis WhatsApp par le propriétaire. */
+  async _waPair(name, rest, P) {
+    const phone = String(rest[0] || '').replace(/\D/g, '');
+    const ok = /^[1-9]\d{7,14}$/.test(phone);
+    if (name === 'pair' || name === 'getpair') {
+      if (!ok) return box('🔗 *PAIR*', [`Usage : *${P}pair 509XXXXXXXX*`, 'Indicatif + numéro, sans + ni 0.']);
+      try {
+        const r = await this.connect(`w${phone}`, phone);
+        if (r.status === 'already_connected') return box('✅ *PAIR*', [`${r.phone} est déjà connecté.`]);
+        return box('🔑 *PAIRING CODE*', [
+          `Numéro : ${r.phone}`,
+          `Code   : *${r.code}*`,
+          'WhatsApp → Appareils connectés → Connecter avec le numéro de téléphone.',
+          `Expire dans ~${Math.round(r.expires_in / 60)} min. Ne le partagez pas.`,
+        ]);
+      } catch (err) {
+        return box('❌ *PAIR*', [err instanceof ApiError ? err.message : 'Échec, réessayez dans un instant.']);
+      }
+    }
+    if (!ok) return box('🔌 *DEPAIR*', [`Usage : *${P}depair 509XXXXXXXX*`, 'Retire un numéro lié avec .pair.']);
+    try {
+      const r = await this.disconnect(`w${phone}`);
+      return r.found
+        ? box('✅ *DEPAIR*', [`+${phone.slice(0, 3)}•••${phone.slice(-2)} est déconnecté.`])
+        : box('ℹ️ *DEPAIR*', ['Aucune session liée avec .pair pour ce numéro.', 'Les sessions Telegram se retirent avec .disconnect.']);
+    } catch (err) {
+      return box('❌ *DEPAIR*', [err instanceof ApiError ? err.message : 'Échec, réessayez.']);
+    }
   }
 
   status(tgIdRaw) {
