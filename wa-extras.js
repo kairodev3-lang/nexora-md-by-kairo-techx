@@ -20,6 +20,7 @@ const MAX_STICKERS = 50;
 
 export const DEFAULT_SETTINGS = Object.freeze({
   prefix: '.',
+  mode: 'private', // private = seulement le propriétaire · public = les autres ont accès aux commandes publiques
   autorecording: false,
   autotyping: false,
   anticall: false,
@@ -29,7 +30,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   autoviewstatus: false,
   autolikestatus: false,
 });
-const BOOL_KEYS = Object.keys(DEFAULT_SETTINGS).filter((k) => k !== 'prefix');
+const BOOL_KEYS = Object.keys(DEFAULT_SETTINGS).filter((k) => k !== 'prefix' && k !== 'mode');
 
 const ALIASES = {
   autorec: 'autorecording', arecording: 'autorecording',
@@ -58,9 +59,19 @@ const CMD_ALIASES = {
   fancytext: 'fancy',
 };
 const COMMANDS = new Set([
-  'apk', 'unblock', 'save', 'setprefix', 'video', 'pinterest', 'telegram', 'jid', 'fancy',
+  'apk', 'unblock', 'save', 'setprefix', 'mode', 'video', 'pinterest', 'telegram', 'jid', 'fancy',
   ...Object.keys(INFO), ...Object.keys(ALIASES), ...Object.keys(CMD_ALIASES),
 ]);
+
+/* ───────── mode public : ce que les autres peuvent utiliser ───────── */
+// Tout le reste (réglages, unblock, save, pair, telegram, jid, mode…) reste réservé au propriétaire.
+const PUBLIC_CMDS = new Set(['menu', 'help', 'owner', 'alive', 'ping', 'runtime', 'status', 'apk', 'video', 'pinterest', 'fancy']);
+const HEAVY_CMDS = new Set(['apk', 'video', 'pinterest']);
+const OWNER_ONLY_BASE = new Set(['pair', 'getpair', 'depair', 'unpair']);
+const GUEST_WINDOW_MS = 60_000;
+const GUEST_MAX_PER_WINDOW = 8;
+const GUEST_HEAVY_COOLDOWN_MS = 60_000;
+const GUEST_MAX_HEAVY_PARALLEL = 2;
 
 /* ───────── .fancy : 10 styles d'écriture ───────── */
 const SMALL_CAPS = { a: 'ᴀ', b: 'ʙ', c: 'ᴄ', d: 'ᴅ', e: 'ᴇ', f: 'ғ', g: 'ɢ', h: 'ʜ', i: 'ɪ', j: 'ᴊ', k: 'ᴋ', l: 'ʟ', m: 'ᴍ', n: 'ɴ', o: 'ᴏ', p: 'ᴘ', q: 'ǫ', r: 'ʀ', s: 's', t: 'ᴛ', u: 'ᴜ', v: 'ᴠ', w: 'ᴡ', x: 'x', y: 'ʏ', z: 'ᴢ' };
@@ -119,6 +130,7 @@ export async function loadSettings(dir) {
   try {
     const raw = JSON.parse(await fs.readFile(path.join(dir, SETTINGS_FILE), 'utf8'));
     for (const k of BOOL_KEYS) if (typeof raw[k] === 'boolean') s[k] = raw[k];
+    if (raw.mode === 'public' || raw.mode === 'private') s.mode = raw.mode;
     if (typeof raw.prefix === 'string' && raw.prefix.length === 1 && PREFIX_CHARS.includes(raw.prefix)) s.prefix = raw.prefix;
   } catch {
     /* pas de fichier ou fichier illisible → valeurs par défaut */
@@ -428,6 +440,60 @@ export async function createExtras({ sock, authDir, send, helpers, log = () => {
     return reply(box('✨ *FANCY TEXT*', fancyAll(text).map(([name, out], i) => `${i + 1}. ${out}`)));
   }
 
+
+  /* ───────── .mode ───────── */
+  async function setMode(arg, reply) {
+    const v = String(arg || '').toLowerCase();
+    if (v !== 'public' && v !== 'private') {
+      return reply(box('🌐 *MODE*', [
+        `Statut : *${settings.mode.toUpperCase()}*`,
+        'public  : les autres utilisent les commandes publiques',
+        'private : vous seul',
+        `Usage : *${P()}mode public* ou *${P()}mode private*`,
+      ]));
+    }
+    settings.mode = v;
+    await saveSettings(authDir, settings);
+    return reply(box('🌐 *MODE*', [
+      `Mode : *${v.toUpperCase()}* ✅`,
+      v === 'public'
+        ? `Accessible à tous : ${[...PUBLIC_CMDS].map((c) => P() + c).join(' ')}`
+        : 'Seul le propriétaire peut utiliser le bot.',
+    ]));
+  }
+
+  /* ───────── contrôle d'accès des autres utilisateurs (mode public) ───────── */
+  const guests = new Map(); // expéditeur -> { times: number[], heavyAt: number, warnedAt: number }
+  let heavyActive = 0;
+  function guestCheck(cmd, sender, now = Date.now()) {
+    const name = CMD_ALIASES[cmd] || cmd;
+    const known = PUBLIC_CMDS.has(name);
+    if (!known) return { status: COMMANDS.has(cmd) || OWNER_ONLY_BASE.has(cmd) ? 'owner_only' : 'ignore' };
+    let g = guests.get(sender);
+    if (!g) {
+      g = { times: [], heavyAt: 0, warnedAt: 0 };
+      guests.set(sender, g);
+      if (guests.size > 500) for (const [k, v] of guests) if (!v.times.some((t) => now - t < GUEST_WINDOW_MS)) guests.delete(k);
+    }
+    g.times = g.times.filter((t) => now - t < GUEST_WINDOW_MS);
+    const slow = (wait) => {
+      const notify = now - g.warnedAt > 15_000;
+      if (notify) g.warnedAt = now;
+      return { status: 'slow', wait: Math.max(1, Math.ceil(wait / 1000)), notify };
+    };
+    if (g.times.length >= GUEST_MAX_PER_WINDOW) return slow(GUEST_WINDOW_MS - (now - g.times[0]));
+    const heavy = HEAVY_CMDS.has(name);
+    if (heavy) {
+      if (now - g.heavyAt < GUEST_HEAVY_COOLDOWN_MS) return slow(GUEST_HEAVY_COOLDOWN_MS - (now - g.heavyAt));
+      if (heavyActive >= GUEST_MAX_HEAVY_PARALLEL) return { status: 'busy' };
+      g.heavyAt = now;
+      heavyActive++;
+    }
+    g.times.push(now);
+    let released = !heavy;
+    return { status: 'ok', release: () => { if (!released) { released = true; heavyActive--; } } };
+  }
+
   /* ───────── réglages ───────── */
   async function toggle(key, name, arg, reply) {
     const i = INFO[key];
@@ -458,6 +524,7 @@ export async function createExtras({ sock, authDir, send, helpers, log = () => {
       if (name === 'unblock') return await unblock({ jid, content, reply });
       if (name === 'save') return await saveStatus({ jid, content, reply, requireStatus: false });
       if (name === 'setprefix') return await setPrefix(args[0], reply);
+      if (name === 'mode') return await setMode(args[0], reply);
       if (name === 'pinterest') return await pinterest(q, { reply, jid, m });
       if (name === 'video') return await ytVideo(q, { reply, jid, m });
       if (name === 'telegram') return await tgStickers(args, { reply, jid, m });
@@ -528,5 +595,5 @@ export async function createExtras({ sock, authDir, send, helpers, log = () => {
     }
   }
 
-  return { settings, has: (cmd) => COMMANDS.has(cmd), handleCommand, saveFromStatus, onIncoming, onCalls, onGroupUpdate };
+  return { settings, has: (cmd) => COMMANDS.has(cmd), guestCheck, handleCommand, saveFromStatus, onIncoming, onCalls, onGroupUpdate };
 }
